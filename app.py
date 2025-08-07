@@ -45,7 +45,7 @@ from tts import generate_tts
 
 
 # --- Header ---
-st.html("""<h2 style="text-align: center;">📚🔍 <i> Do your LLM even RAG bro? </i> 🤖💬</h2>""")
+st.html("""<h2 style="text-align: center;">📚🔍 <i> Please ask me something... </i> 🤖💬</h2>""")
 
 
 # --- Initial Setup ---
@@ -244,9 +244,5 @@ else:
 
 with st.sidebar:
     st.divider()
-    st.markdown("""
-    <hr style="border:1px solid #ccc">
-    <h3 style='text-align: center; color: gray;'>👨‍💻 Developed by: <strong>Andrew Wong.</strong></h3>
-    """, unsafe_allow_html=True)
 
 
