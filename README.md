@@ -23,7 +23,7 @@ A lightweight, local-ready **Retrieval-Augmented Generation (RAG)** application 
 
 ```bash
 git clone https://github.com/Wonggt/RAG.git
-cd rag_llm_app
+cd RAG-main
 ```
 
 ### 2. Create and activate virtual environment
@@ -80,11 +80,10 @@ rag_llm_app/
 
 ## 🔐 API Keys
 
-To use OpenAI / Azure / Claude, set your API keys via environment variables or `.env` file:
+To use OpenRouter, set your API keys via environment variables or `.env` file:
 
 ```
-OPENAI_API_KEY=your-openai-key
-ANTHROPIC_API_KEY=your-anthropic-key
+OPENROUTER_API_KEY=your-openrouter-key
 ```
 
 ---
