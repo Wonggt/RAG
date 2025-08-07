@@ -162,7 +162,7 @@ else:
         api_key=openrouter_api_key,
         model_name=st.session_state.model,
         openai_api_base="https://openrouter.ai/api/v1",
-        temperature=0.1,
+        temperature=0.2,
         streaming=True,
     )
     # elif model_provider == "anthropic":
