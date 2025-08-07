@@ -121,6 +121,9 @@ else:
 
         with cols0[1]:
             def clear_chat():
+                if "tts_audio_files" not in st.session_state:
+                    st.session_state.tts_audio_files = []
+
                 st.session_state.messages = [
                     {"role": "user", "content": "Hello"},
                     {"role": "assistant", "content": "Hi there! How can I assist you today?"}
