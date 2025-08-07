@@ -30,7 +30,7 @@ cd RAG-main
 
 Using conda:
 ```bash
-conda create -n rag_app python=3.10
+conda create -n rag_app python=3.9
 conda activate rag_app
 ```
 
