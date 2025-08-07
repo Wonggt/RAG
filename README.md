@@ -22,7 +22,7 @@ A lightweight, local-ready **Retrieval-Augmented Generation (RAG)** application 
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/yourusername/rag_llm_app.git
+git clone https://github.com/Wonggt/RAG.git
 cd rag_llm_app
 ```
 
