@@ -122,7 +122,7 @@ def _get_context_retriever_chain(vector_db, llm):
 def get_conversational_rag_chain(llm):
     retriever_chain = _get_context_retriever_chain(st.session_state.vector_db, llm)
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "You are a helpful assistant. Use only the provided context to answer the question directly and concisely. Do not explain your reasoning. Do not include your thinking process.\n\nContext:\n{context}"),
+        ("system", "You are a helpful assistant. Use only the provided context to answer the question directly and concisely. Do not explain your reasoning. Do not include your thinking process. Please exclude your thinking process\n\nContext:\n{context}"),
         MessagesPlaceholder(variable_name="messages"),
         ("user", "{input}"),
     ])
