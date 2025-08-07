@@ -13,7 +13,7 @@ A lightweight, local-ready **Retrieval-Augmented Generation (RAG)** application 
 - Upload your own documents and ask questions with context-aware responses.
 - Voice responses using Microsoft Edge TTS.
 - Streamlit-based web UI for local or online deployment.
-- Supports OpenAI, Azure, and Claude models via LangChain.
+- Supports OpenRouter models via LangChain.
 
 ---
 
