@@ -10,6 +10,7 @@ async-timeout==4.0.3
 attrs==25.3.0
 backcall==0.2.0
 blinker==1.9.0
+beautifulsoup4
 cachetools==6.1.0
 certifi==2025.8.3
 charset-normalizer==3.4.2
