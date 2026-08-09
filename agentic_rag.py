@@ -187,7 +187,7 @@ def make_generate_node(llm):
          "provided context. Cite sources inline using bracketed numbers like [1], [2] "
          "that correspond to the numbered documents below. "
          "If the context does not contain the answer, say so honestly — do not invent facts. "
-         "Be concise. Do not include your reasoning process.\n\n"
+         "Provide a thorough, well-structured answer with 2-3 short paragraphs. Include specific details from the context (numbers, names, dates when relevant).Cite sources inline using [N] markers.\n\n"
          "Context:\n{context}"),
         ("user", "{question}"),
     ])
