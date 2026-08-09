@@ -17,6 +17,8 @@ vs a fixed chain. The grader can send the query back for rewriting; the generato
 is instructed to cite its sources.
 """
 
+import json
+import re
 from typing import List, TypedDict, Literal
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
@@ -85,12 +87,50 @@ def make_retrieve_node(retriever):
     return node
 
 
+def _parse_grade_json(text: str) -> GradeDocuments:
+    """
+    Tolerantly parse the grader's JSON output.
+    Accepts raw JSON, JSON in a code fence, or JSON embedded in prose.
+    Defaults to 'yes' on any parse failure — safer to over-generate than
+    to block the pipeline on a formatting hiccup.
+    """
+    # Strip common code-fence wrappers
+    cleaned = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.MULTILINE).strip()
+    try:
+        data = json.loads(cleaned)
+    except Exception:
+        # Try to find a JSON object anywhere in the text
+        m = re.search(r"\{.*?\}", cleaned, re.DOTALL)
+        if not m:
+            return GradeDocuments(is_relevant="yes", reason="parse-fallback")
+        try:
+            data = json.loads(m.group(0))
+        except Exception:
+            return GradeDocuments(is_relevant="yes", reason="parse-fallback")
+    verdict = str(data.get("is_relevant", "yes")).lower().strip()
+    if verdict not in ("yes", "no"):
+        verdict = "yes"
+    return GradeDocuments(
+        is_relevant=verdict,
+        reason=str(data.get("reason", "")) or "no reason given",
+    )
+
+
 def make_grade_node(llm):
-    """LLM decides if retrieved docs are actually useful."""
+    """
+    LLM decides if retrieved docs are actually useful.
+
+    Uses plain JSON output (parsed manually) rather than
+    llm.with_structured_output() so it works with ANY chat model,
+    including fake models used in tests and models that don't support
+    tool-calling / function-calling.
+    """
     prompt = ChatPromptTemplate.from_messages([
         ("system",
          "You are grading whether retrieved documents contain enough information "
          "to answer the user's question. "
+         "Reply with a JSON object ONLY, no prose, in this exact shape:\n"
+         '  {{"is_relevant": "yes" | "no", "reason": "<one sentence>"}}\n'
          "Answer 'yes' if at least one document is on-topic and useful, "
          "'no' if all documents are off-topic or irrelevant."),
         ("user",
@@ -98,24 +138,22 @@ def make_grade_node(llm):
          "Retrieved documents:\n{docs}\n\n"
          "Are these documents relevant enough to answer the question?"),
     ])
-    grader = llm.with_structured_output(GradeDocuments)
-    chain = prompt | grader
+    chain = prompt | llm | StrOutputParser()
 
     def node(state: AgenticRAGState) -> dict:
-        # Concatenate a preview of each doc so the grader has context
         docs_preview = "\n---\n".join(
             f"[Doc {i+1}] {d.page_content[:400]}"
             for i, d in enumerate(state["documents"])
         ) or "(no documents)"
         try:
-            verdict = chain.invoke({
+            raw = chain.invoke({
                 "question": state["original_question"],
                 "docs": docs_preview,
             })
+            verdict = _parse_grade_json(raw)
             note = f"✅ Grader: {verdict.is_relevant} — {verdict.reason}"
         except Exception as e:
-            # If grader fails (e.g. model doesn't support structured output well),
-            # default to "yes" so we don't block the pipeline.
+            # Any hard failure -> assume relevant so pipeline still produces an answer
             verdict = GradeDocuments(is_relevant="yes", reason=f"grader-fallback: {e}")
             note = f"⚠️ Grader fallback (assuming relevant): {e}"
         return {"trace": state["trace"] + [note], "_grade": verdict.is_relevant}
