@@ -27,10 +27,8 @@ from agentic_rag import build_agentic_rag_graph, run_agentic_rag
 dotenv.load_dotenv()
 
 MODELS = [
-        "inclusionai/ling-3.0-tiny:free",
-        "nvidia/llama-nemotron-rerank-vl-1b-v2:free",
-        "google/gemma-4-26b-a4b-it:free",
-        "google/gemma-4-31b-it:free",
+        # Ranked by reliability (least likely to hit shared rate-limits first)
+        "openrouter/free"
 ]
 
 st.set_page_config(
