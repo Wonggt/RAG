@@ -1,5 +1,8 @@
 import os
+import tempfile
+import requests
 from time import time
+from urllib.parse import urlparse
 import streamlit as st
 
 from langchain_community.document_loaders.text import TextLoader
@@ -77,6 +80,37 @@ def load_doc_to_db():
             st.toast(f"Document(s) loaded: {', '.join([doc_file.name for doc_file in st.session_state.rag_docs])}", icon="✅")
 
 
+def _is_pdf_url(url: str) -> bool:
+    """Detect PDF URLs by extension OR by HEAD request Content-Type."""
+    if urlparse(url).path.lower().endswith(".pdf"):
+        return True
+    try:
+        r = requests.head(url, timeout=5, allow_redirects=True,
+                          headers={"User-Agent": "Mozilla/5.0"})
+        return "application/pdf" in r.headers.get("Content-Type", "").lower()
+    except Exception:
+        return False
+
+
+def _load_pdf_from_url(url: str):
+    """Download PDF to a temp file, then parse with PyPDFLoader."""
+    with st.spinner("📥 Downloading PDF..."):
+        r = requests.get(url, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
+        r.raise_for_status()
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+        tmp.write(r.content)
+        tmp_path = tmp.name
+    try:
+        with st.spinner("📖 Extracting text from PDF..."):
+            loader = PyPDFLoader(tmp_path)
+            return loader.load()
+    finally:
+        try:
+            os.remove(tmp_path)
+        except Exception:
+            pass
+
+
 def load_url_to_db():
     if "rag_url" in st.session_state and st.session_state.rag_url:
         url = st.session_state.rag_url
@@ -84,18 +118,23 @@ def load_url_to_db():
         if url not in st.session_state.rag_sources:
             if len(st.session_state.rag_sources) < DB_DOCS_LIMIT:
                 try:
-                    # Set a UA and timeout — some sites hang or 403 without them.
-                    loader = WebBaseLoader(
-                        url,
-                        requests_kwargs={"timeout": 15},
-                        header_template={
-                            "User-Agent": "Mozilla/5.0 (compatible; RAGBot/1.0)"
-                        },
-                    )
-                    docs = loader.load()
+                    # Route by content type: PDF URLs must use PyPDFLoader,
+                    # NOT WebBaseLoader (which would try to parse bytes as HTML).
+                    if _is_pdf_url(url):
+                        docs = _load_pdf_from_url(url)
+                    else:
+                        with st.spinner("🌐 Fetching web page..."):
+                            loader = WebBaseLoader(
+                                url,
+                                requests_kwargs={"timeout": 15},
+                                header_template={
+                                    "User-Agent": "Mozilla/5.0 (compatible; RAGBot/1.0)"
+                                },
+                            )
+                            docs = loader.load()
                     st.session_state.rag_sources.append(url)
                     _split_and_load_docs(docs)
-                    st.toast(f"URL loaded successfully: {url}", icon="✅")
+                    st.toast(f"URL loaded ({len(docs)} pages): {url}", icon="✅")
                 except Exception as e:
                     st.error(f"Failed to load from URL: {e}")
             else:
@@ -140,10 +179,17 @@ def _split_and_load_docs(docs):
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=120)
     chunks = text_splitter.split_documents(docs)
 
-    if "vector_db" not in st.session_state:
-        st.session_state.vector_db = initialize_vector_db(chunks)
-    else:
-        st.session_state.vector_db.add_documents(chunks)
+    # Tell the user what's happening — indexing is where 60-page PDFs get stuck
+    using_cohere = bool(os.getenv("COHERE_API_KEY"))
+    engine = "Cohere API (fast)" if using_cohere else "local e5-base (slow on CPU)"
+    with st.spinner(f"🧬 Embedding {len(chunks)} chunks via {engine}..."):
+        t0 = time()
+        if "vector_db" not in st.session_state:
+            st.session_state.vector_db = initialize_vector_db(chunks)
+        else:
+            st.session_state.vector_db.add_documents(chunks)
+        elapsed = time() - t0
+    st.caption(f"⏱️ Indexed {len(chunks)} chunks in {elapsed:.1f}s using {engine}")
 
     # Also track raw chunks so BM25 (keyword search) can index them.
     if "all_chunks" not in st.session_state:
