@@ -24,10 +24,10 @@ from rag_methods import (
 dotenv.load_dotenv()
 
 MODELS = [
-        "qwen/qwen3-235b-a22b:free",
-        "meta-llama/llama-3.2-3b-instruct:free",
-        "deepseek/deepseek-chat-v3-0324:free",
-        "google/gemma-3-27b-it:free",
+        "inclusionai/ling-3.0-tiny:free",
+        "nvidia/llama-nemotron-rerank-vl-1b-v2:free",
+        "google/gemma-4-26b-a4b-it:free",
+        "google/gemma-4-31b-it:free",
 ]
 
 st.set_page_config(
