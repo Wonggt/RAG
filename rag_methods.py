@@ -84,7 +84,14 @@ def load_url_to_db():
         if url not in st.session_state.rag_sources:
             if len(st.session_state.rag_sources) < DB_DOCS_LIMIT:
                 try:
-                    loader = WebBaseLoader(url)
+                    # Set a UA and timeout — some sites hang or 403 without them.
+                    loader = WebBaseLoader(
+                        url,
+                        requests_kwargs={"timeout": 15},
+                        header_template={
+                            "User-Agent": "Mozilla/5.0 (compatible; RAGBot/1.0)"
+                        },
+                    )
                     docs = loader.load()
                     st.session_state.rag_sources.append(url)
                     _split_and_load_docs(docs)
@@ -95,8 +102,14 @@ def load_url_to_db():
                 st.error(f"Maximum number of documents reached ({DB_DOCS_LIMIT})")
 
 
+@st.cache_resource(show_spinner="Loading embedding model (multilingual-e5-base)...")
 def get_local_embedding_model():
-    return HuggingFaceEmbeddings(model_name="intfloat/multilingual-e5-base")
+    """Cached: only load the ~1.1GB embedding model once per session."""
+    return HuggingFaceEmbeddings(
+        model_name="intfloat/multilingual-e5-base",
+        # Batch more docs per forward pass -> big speedup on CPU
+        encode_kwargs={"batch_size": 32, "normalize_embeddings": True},
+    )
 
 
 def initialize_vector_db(docs):
@@ -106,7 +119,10 @@ def initialize_vector_db(docs):
 
 
 def _split_and_load_docs(docs):
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=5000, chunk_overlap=500)
+    # chunk_size=5000 was WAY too big — e5-base truncates at 512 tokens,
+    # so most of each chunk was silently ignored. 800/120 is the sweet spot
+    # for e5-family models and gives much better retrieval quality too.
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=120)
     chunks = text_splitter.split_documents(docs)
 
     if "vector_db" not in st.session_state:
@@ -115,11 +131,13 @@ def _split_and_load_docs(docs):
         st.session_state.vector_db.add_documents(chunks)
 
     # Also track raw chunks so BM25 (keyword search) can index them.
-    # FAISS doesn't expose its stored documents in a way BM25 can consume,
-    # so we keep a parallel list.
     if "all_chunks" not in st.session_state:
         st.session_state.all_chunks = []
     st.session_state.all_chunks.extend(chunks)
+
+    # Invalidate cached BM25 / hybrid retriever — new docs came in.
+    st.session_state.pop("_bm25_retriever", None)
+    st.session_state.pop("_hybrid_retriever", None)
 
 
 def get_retriever(vector_db, k: int = 4):
@@ -141,8 +159,14 @@ def get_hybrid_retriever(vector_db, chunks, k_dense: int = 6, k_sparse: int = 6)
     - BM25 catches exact keyword/entity matches (numbers, proper nouns, code)
     - FAISS catches semantic paraphrases
     Weights favor semantic slightly (0.6 vs 0.4) but both contribute.
+
+    BM25 is cached in session_state and only rebuilt when new docs are added
+    (see `_split_and_load_docs` which invalidates the cache).
     """
-    bm25 = BM25Retriever.from_documents(chunks)
+    bm25 = st.session_state.get("_bm25_retriever")
+    if bm25 is None:
+        bm25 = BM25Retriever.from_documents(chunks)
+        st.session_state._bm25_retriever = bm25
     bm25.k = k_sparse
     dense = vector_db.as_retriever(search_kwargs={"k": k_dense})
     return EnsembleRetriever(retrievers=[bm25, dense], weights=[0.4, 0.6])
