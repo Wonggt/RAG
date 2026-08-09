@@ -102,18 +102,33 @@ def load_url_to_db():
                 st.error(f"Maximum number of documents reached ({DB_DOCS_LIMIT})")
 
 
-@st.cache_resource(show_spinner="Loading embedding model (multilingual-e5-base)...")
-def get_local_embedding_model():
-    """Cached: only load the ~1.1GB embedding model once per session."""
+@st.cache_resource(show_spinner="Loading embedding model...")
+def get_embedding_model():
+    """
+    Prefer Cohere's `embed-multilingual-v3.0` (API — fast, no local download,
+    excellent multilingual quality). Falls back to local e5-base if no
+    COHERE_API_KEY is set, so the app still runs fully offline.
+    """
+    cohere_key = os.getenv("COHERE_API_KEY")
+    if cohere_key:
+        from langchain_cohere import CohereEmbeddings
+        return CohereEmbeddings(
+            model="embed-multilingual-v3.0",
+            cohere_api_key=cohere_key,
+        )
+    # --- Local fallback ---
     return HuggingFaceEmbeddings(
         model_name="intfloat/multilingual-e5-base",
-        # Batch more docs per forward pass -> big speedup on CPU
         encode_kwargs={"batch_size": 32, "normalize_embeddings": True},
     )
 
 
+# Backwards-compat alias — old code paths may still call this
+get_local_embedding_model = get_embedding_model
+
+
 def initialize_vector_db(docs):
-    embedding = get_local_embedding_model()
+    embedding = get_embedding_model()
     vector_db = FAISS.from_documents(documents=docs, embedding=embedding)
     return vector_db
 
