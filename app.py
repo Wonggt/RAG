@@ -15,11 +15,14 @@ from langchain_anthropic import ChatAnthropic
 from langchain.schema import HumanMessage, AIMessage
 
 from rag_methods import (
-    load_doc_to_db, 
+    load_doc_to_db,
     load_url_to_db,
     stream_llm_response,
     stream_llm_rag_response,
+    get_retriever,
+    get_optimized_retriever,
 )
+from agentic_rag import build_agentic_rag_graph, run_agentic_rag
 
 dotenv.load_dotenv()
 
@@ -113,10 +116,17 @@ else:
         with cols0[0]:
             is_vector_db_loaded = ("vector_db" in st.session_state and st.session_state.vector_db is not None)
             st.toggle(
-                "Use RAG", 
-                value=is_vector_db_loaded, 
-                key="use_rag", 
+                "Use RAG",
+                value=is_vector_db_loaded,
+                key="use_rag",
                 disabled=not is_vector_db_loaded,
+            )
+            st.toggle(
+                "🧠 Agentic mode",
+                value=False,
+                key="use_agentic",
+                disabled=not is_vector_db_loaded,
+                help="Query rewriting + relevance grading + citations (slower, higher quality)",
             )
 
         with cols0[1]:
@@ -204,15 +214,50 @@ else:
 
             messages = [HumanMessage(content=m["content"]) if m["role"] == "user" else AIMessage(content=m["content"]) for m in st.session_state.messages]
 
-            if not st.session_state.use_rag:
-                response_stream = stream_llm_response(llm_stream, messages)
-            else:
-                response_stream = stream_llm_rag_response(llm_stream, messages)
+            # Route: Agentic RAG > classic RAG > plain LLM
+            use_agentic = st.session_state.get("use_agentic", False) and st.session_state.get("use_rag", False)
 
-            # Collect and display streamed response
-            for chunk in response_stream:
-                full_response += chunk
+            if use_agentic:
+                # Agentic pipeline is not token-streamed (each node runs to completion).
+                # Show a status spinner so the user sees progress instead.
+                with st.status("🧠 Agentic RAG thinking...", expanded=True) as status:
+                    # Optimized retrieval: BM25 + FAISS hybrid -> cross-encoder rerank
+                    chunks = st.session_state.get("all_chunks", [])
+                    if chunks:
+                        retriever = get_optimized_retriever(
+                            st.session_state.vector_db, chunks, top_n=4
+                        )
+                        st.write("🔀 Using Hybrid (BM25 + FAISS) + BGE Rerank")
+                    else:
+                        retriever = get_retriever(st.session_state.vector_db, k=4)
+                        st.write("📥 Using FAISS-only retriever (no chunks tracked)")
+                    graph = build_agentic_rag_graph(llm_stream, retriever)
+                    result = run_agentic_rag(graph, prompt)
+                    for step in result["trace"]:
+                        st.write(step)
+                    status.update(label="✅ Done", state="complete", expanded=False)
+
+                full_response = result["answer"]
                 message_placeholder.markdown(full_response)
+
+                # Render citations
+                if result["citations"]:
+                    with st.expander(f"📎 Sources ({len(result['citations'])})"):
+                        for c in result["citations"]:
+                            page = f" (p.{c['page']+1})" if c["page"] is not None else ""
+                            src = os.path.basename(str(c["source"]))
+                            st.markdown(f"**[{c['index']}] {src}{page}**")
+                            st.caption(c["snippet"] + "...")
+            else:
+                if not st.session_state.use_rag:
+                    response_stream = stream_llm_response(llm_stream, messages)
+                else:
+                    response_stream = stream_llm_rag_response(llm_stream, messages)
+
+                # Collect and display streamed response
+                for chunk in response_stream:
+                    full_response += chunk
+                    message_placeholder.markdown(full_response)
 
 
             # Generate TTS audio and display it
@@ -235,9 +280,10 @@ else:
             if tts_audio:
                 message_preview = full_response[:50] + "..."
                 st.session_state.tts_audio_files.append({"audio": tts_audio, "message": message_preview})
-            
-            # 显示当前音频
-            st.audio(tts_audio, format="audio/wav")
+                # 显示当前音频（gTTS 输出的是 mp3）
+                st.audio(tts_audio, format="audio/mp3")
+            else:
+                st.info("🔇 语音生成暂不可用（可能是不支持的语言或网络问题）")
             
             # 将当前回复添加到消息历史（这行已经存在，不需要重复添加）
             st.session_state.messages.append({"role": "assistant", "content": full_response})

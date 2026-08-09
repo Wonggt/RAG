@@ -17,6 +17,12 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.chains import create_history_aware_retriever, create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 
+# Hybrid search + reranking
+from langchain_community.retrievers import BM25Retriever
+from langchain.retrievers import EnsembleRetriever, ContextualCompressionRetriever
+from langchain.retrievers.document_compressors import CrossEncoderReranker
+from langchain_community.cross_encoders import HuggingFaceCrossEncoder
+
 
 DB_DOCS_LIMIT = 10
 
@@ -107,6 +113,58 @@ def _split_and_load_docs(docs):
         st.session_state.vector_db = initialize_vector_db(chunks)
     else:
         st.session_state.vector_db.add_documents(chunks)
+
+    # Also track raw chunks so BM25 (keyword search) can index them.
+    # FAISS doesn't expose its stored documents in a way BM25 can consume,
+    # so we keep a parallel list.
+    if "all_chunks" not in st.session_state:
+        st.session_state.all_chunks = []
+    st.session_state.all_chunks.extend(chunks)
+
+
+def get_retriever(vector_db, k: int = 4):
+    """Plain dense retriever (FAISS only) — used as fallback."""
+    return vector_db.as_retriever(search_kwargs={"k": k})
+
+
+# --- Hybrid search + Reranking (optimized retrieval) ---
+
+@st.cache_resource(show_spinner="Loading reranker (BAAI/bge-reranker-base)...")
+def _load_reranker():
+    """Cached: only download & load the ~278MB cross-encoder once per session."""
+    return HuggingFaceCrossEncoder(model_name="BAAI/bge-reranker-base")
+
+
+def get_hybrid_retriever(vector_db, chunks, k_dense: int = 6, k_sparse: int = 6):
+    """
+    Hybrid = BM25 (keyword) + FAISS (semantic) via reciprocal rank fusion.
+    - BM25 catches exact keyword/entity matches (numbers, proper nouns, code)
+    - FAISS catches semantic paraphrases
+    Weights favor semantic slightly (0.6 vs 0.4) but both contribute.
+    """
+    bm25 = BM25Retriever.from_documents(chunks)
+    bm25.k = k_sparse
+    dense = vector_db.as_retriever(search_kwargs={"k": k_dense})
+    return EnsembleRetriever(retrievers=[bm25, dense], weights=[0.4, 0.6])
+
+
+def get_reranked_retriever(base_retriever, top_n: int = 4):
+    """
+    Wraps any retriever with a cross-encoder rerank pass.
+    Cross-encoder scores (query, doc) as a pair -> much more accurate than
+    bi-encoder cosine similarity, at the cost of latency (~50-200ms for top-12).
+    """
+    reranker = CrossEncoderReranker(model=_load_reranker(), top_n=top_n)
+    return ContextualCompressionRetriever(
+        base_compressor=reranker,
+        base_retriever=base_retriever,
+    )
+
+
+def get_optimized_retriever(vector_db, chunks, top_n: int = 4):
+    """Hybrid search -> cross-encoder rerank. The full recipe."""
+    hybrid = get_hybrid_retriever(vector_db, chunks, k_dense=6, k_sparse=6)
+    return get_reranked_retriever(hybrid, top_n=top_n)
 
 
 def _get_context_retriever_chain(vector_db, llm):
